@@ -29,7 +29,7 @@ def main(args):
     
     assert initial in ["UNIFORM", "RANDOM"], "Initial mode must be UNIFORM, RANDOM."
     assert info_mode in ["NO", "PARTIAL", "FULL"], "Initial mode must be NO, PARTIAL, or FULL."
-    assert algo in ["exp3", "exp3s"], "Learning algorithm must be exp3 or exp3s."
+    assert algo in ["exp3", "exp3s", "exp4"], "Learning algorithm must be exp3 or exp3s."
     
     
     # running simulation

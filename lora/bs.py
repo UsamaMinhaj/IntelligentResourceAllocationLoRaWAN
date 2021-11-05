@@ -1,5 +1,7 @@
 import numpy as np
 from .loratools import dBmTomW
+from numpy.random import Generator, PCG64
+
 class myBS():
     """ LPWAN Simulator: base station
     Base station class
@@ -14,8 +16,9 @@ class myBS():
     \param [IN] nDemodulator: number of demodulators for each BS
     
     """
-    
+
     """ init the lora bs parameters"""
+
     def __init__(self, bsid, position, interactionMatrix, nDemodulator, ackLength, freqSet, sfSet, captureThreshold):
         self.bsid = bsid
         self.x, self.y = position
@@ -23,7 +26,9 @@ class myBS():
         self.ackLength = ackLength
         self.interactionMatrix = interactionMatrix
         self.captureThreshold = captureThreshold
-        
+        self.packet_history = dict()
+
+
         # packet and ack
         self.packets = {}
         self.ack = {}
@@ -33,12 +38,12 @@ class myBS():
         self.sfSet = sfSet
         for freq in freqSet:
             self.packetsInBucket[freq] = {}
-            self.signalLevel[freq] = np.zeros((6,1))
-        
+            self.signalLevel[freq] = np.zeros((6, 1))
+
         # measurement params
         self.demodulator = set()
         self.successNo = 0
-    
+
     def addPacket(self, nodeid, packet):
         """ Send a packet to the base station.
         Parameters
@@ -52,17 +57,25 @@ class myBS():
             List of packets at BS.
         -------
         """
+        # print('Signal level:------------------------------------------------' + str(packet.signalLevel))
+        countOsama = 0
         for fbucket in packet.signalLevel.keys():
-            #print("before-" + str(self.signalLevel[fbucket]))
+            # if(countOsama==0):
+            # print(fbucket)
+            # print("before-" + str(self.signalLevel[fbucket]))
             self.signalLevel[fbucket] = self.signalLevel[fbucket] + packet.signalLevel[fbucket]
-            #print("after-" + str(self.signalLevel[fbucket]))
+            # print("after-" + str(self.signalLevel[fbucket]))
             self.evaluateFreqBucket(fbucket)
             self.packetsInBucket[fbucket][nodeid] = packet
+            countOsama = countOsama + 1
+
+        # print('Level 2')
+        # print(self.signalLevel[fbucket])
         self.packets[nodeid] = packet
-    
+
     def resetACK(self):
         self.ack = {}
-        
+
     def addACK(self, nodeid, packet):
         """ Send an ACK to the node.
         Parameters
@@ -81,7 +94,6 @@ class myBS():
             self.successNo += 1
         self.ack[self.successNo] = packet
 
-            
     def evaluateFreqBucket(self, fbucket):
         """ Packet from node enters critical section.
         Parameters
@@ -94,25 +106,35 @@ class myBS():
             Packet is lost or not.
         -------
         """
+
         signalInBucket = np.dot(self.interactionMatrix, self.signalLevel[fbucket])
+        # print('capture threshold' + str(self.captureThreshold))
+        # print('Signal Bucket')
+        # print(signalInBucket)
         for nodeid, pkt in self.packetsInBucket[fbucket].items():
             if not pkt.isLost and pkt.isCritical:
                 if self.captureThreshold != 0:
-                    if (1 + self.captureThreshold)*(pkt.signalLevel[fbucket][pkt.sf - 7]) < self.captureThreshold * self.signalLevel[fbucket][pkt.sf - 7]:
-                        pkt.isLost = True # CE
+                    if (1 + self.captureThreshold) * (pkt.signalLevel[fbucket][pkt.sf - 7]) < self.captureThreshold * \
+                            self.signalLevel[fbucket][pkt.sf - 7]:
+                        pkt.isLost = True  # CE
+                        pkt.PRR = 0
                     else:
-                        if (1 + self.captureThreshold)*(pkt.signalLevel[fbucket][pkt.sf - 7]) < signalInBucket[pkt.sf - 7]:
-                            pkt.isLost = True # InterSF
+                        if (1 + self.captureThreshold) * (pkt.signalLevel[fbucket][pkt.sf - 7]) < signalInBucket[
+                            pkt.sf - 7]:
+                            pkt.isLost = True  # InterSF
+                            pkt.PRR = 0
                         else:
                             if (pkt.signalLevel[fbucket][pkt.sf - 7]) < self.signalLevel[fbucket][pkt.sf - 7]:
-                                pkt.isCollision = True # collision
+                                pkt.isCollision = True  # collision
                 else:
                     if pkt.signalLevel[fbucket][pkt.sf - 7] < self.signalLevel[fbucket][pkt.sf - 7]:
-                        pkt.isLost = True # collision
-                        pkt.isCollision = True # collision
+                        pkt.isLost = True  # collision
+                        pkt.PRR = 0
+                        pkt.isCollision = True  # collision
                     else:
                         if pkt.signalLevel[fbucket][pkt.sf - 7] < signalInBucket[pkt.sf - 7]:
-                            pkt.isLost = True # interSF
+                            pkt.isLost = True  # interSF
+                            pkt.PRR = 0
 
     def makeCritical(self, nodeid):
         """ Packet from node enters critical section.
@@ -128,7 +150,8 @@ class myBS():
         """
         pkt = self.packets[nodeid]
         if not pkt.isLost:
-            if self.evaluatePacket(nodeid)[0] and len(self.demodulator) <= self.nDemodulator and (pkt.freq, pkt.bw, pkt.sf) not in self.demodulator:
+            if self.evaluatePacket(nodeid)[0] and len(self.demodulator) <= self.nDemodulator and (
+            pkt.freq, pkt.bw, pkt.sf) not in self.demodulator:
                 self.demodulator.add((pkt.freq, pkt.bw, pkt.sf))
                 pkt.isCritical = True
                 if self.evaluatePacket(nodeid)[1]:
@@ -137,8 +160,9 @@ class myBS():
                     pkt.isCollision = True
             else:
                 pkt.isLost = True
+                pkt.PRR = 0
                 pkt.isCritical = False
-                
+
     def evaluatePacket(self, nodeid):
         """ Evaluate packet by consider the capture effect and inter-SF interference conditions.
         Parameters
@@ -160,20 +184,21 @@ class myBS():
             for fbucket in pkt.signalLevel.keys():
                 # print("Receiver power from node "+str(nodeid)+" is "+ str(pkt.signalLevel[fbucket][pkt.sf - 7]))
                 # print("Total power at bs is " + str(self.signalLevel[fbucket][pkt.sf - 7]))
-                signalInBucket = np.dot(self.interactionMatrix[pkt.sf - 7].reshape(1,6), self.signalLevel[fbucket])
+                signalInBucket = np.dot(self.interactionMatrix[pkt.sf - 7].reshape(1, 6), self.signalLevel[fbucket])
                 # print("Total power of signal in Frequency is " + str(signalInBucket))
                 # packet is lost of not due to capture effect and interSF collision
-                
+
                 # with Capture Effect
-                if self.captureThreshold !=0:
+                if self.captureThreshold != 0:
                     # Capture effect
-                    if (1 + self.captureThreshold)*(pkt.signalLevel[fbucket][pkt.sf - 7]) < self.captureThreshold * self.signalLevel[fbucket][pkt.sf - 7]:
+                    if (1 + self.captureThreshold) * (pkt.signalLevel[fbucket][pkt.sf - 7]) < self.captureThreshold * \
+                            self.signalLevel[fbucket][pkt.sf - 7]:
                         lostFlag = True
                         collisionFlag = True
                         # print ("Packet from node "+ str(nodeid) +" is lost due to Capture effect!")  
                     else:
                         # interSF collision
-                        if (1 + self.captureThreshold)*(pkt.signalLevel[fbucket][pkt.sf - 7]) < signalInBucket:
+                        if (1 + self.captureThreshold) * (pkt.signalLevel[fbucket][pkt.sf - 7]) < signalInBucket:
                             lostFlag = True
                             # print ("Packet from node "+ str(nodeid) +" is lost due to InterSF collision!") 
                         else:
@@ -181,7 +206,7 @@ class myBS():
                             if (pkt.signalLevel[fbucket][pkt.sf - 7]) < self.signalLevel[fbucket][pkt.sf - 7]:
                                 collisionFlag = True
                                 # print ("Packet from node "+ str(nodeid) +" is received but collied!")
-                
+
                 # without Capture effect
                 else:
                     # packet is collision or not
@@ -216,7 +241,9 @@ class myBS():
         for fbucket in pkt.signalLevel.keys():
             self.signalLevel[fbucket] = self.signalLevel[fbucket] - pkt.signalLevel[fbucket]
             # rounding problem - float 64
-            self.signalLevel[fbucket][self.signalLevel[fbucket]< 1e-27] = 0
+            self.signalLevel[fbucket][self.signalLevel[fbucket] < 1e-27] = 0
             foo = self.packetsInBucket[fbucket].pop(nodeid)
         foo = self.packets.pop(nodeid)
+        # print(pkt.PRR)
+
         return pkt.isCritical and not pkt.isLost

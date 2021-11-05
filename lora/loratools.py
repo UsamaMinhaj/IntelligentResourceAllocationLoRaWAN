@@ -13,6 +13,7 @@ Utilities (:mod:`lorawan.loratools`)
    dBmTomW                  -- dBm to mW
    dBmTonW                  -- dBm to nW
    getRXPower               -- Get RX power
+   getRXPower2              -- Get RX power using MATLAB model
    getTXPower               -- Get TX power
    getDistanceFromPL        -- Get distance from power lost
    getDistanceFromPower     -- Get distance from TX and RX powers
@@ -24,13 +25,20 @@ Utilities (:mod:`lorawan.loratools`)
 With some codes from CommPy library: http://veeresht.github.com/CommPy
 and LoRaSim library: https://github.com/adwaitnd/lorasim
 
-"""    
+"""
 
 # Import Library
 import numpy as np
 import math
 import random
-__all__ = ['dec2bitarray', 'bitarray2dec', 'dec2bitmatrix', 'hamming_dist', 'euclid_dist', 'upsample','dBmTomW', 'dBmTonW', 'getRXPower', 'getTXPower', 'getDistanceFromPL', 'getDistanceFromPower', 'getFreqBucketsFromSet', 'airtime', 'getMaxTransmitDistance']
+from .channel import nakagami
+from scipy import special
+
+__all__ = ['dec2bitarray', 'bitarray2dec', 'dec2bitmatrix', 'hamming_dist', 'euclid_dist', 'upsample', 'dBmTomW',
+           'dBmTonW', 'getRXPower', 'getRXPower2', 'getTXPower', 'getDistanceFromPL', 'getDistanceFromPower',
+           'getFreqBucketsFromSet',
+           'airtime', 'getMaxTransmitDistance']
+
 
 def dec2bitarray(in_number, bit_width):
     """
@@ -49,7 +57,8 @@ def dec2bitarray(in_number, bit_width):
     """
     k = bin(in_number)[2:].zfill(bit_width)
     bin_array = [int(i) for i in k]
-    return(bin_array)
+    return (bin_array)
+
 
 def bitarray2dec(in_bitarray):
     """
@@ -67,9 +76,10 @@ def bitarray2dec(in_bitarray):
     number = 0
 
     for i in range(len(in_bitarray)):
-        number = number + in_bitarray[i]*pow(2, len(in_bitarray)-1-i)
+        number = number + in_bitarray[i] * pow(2, len(in_bitarray) - 1 - i)
 
     return number
+
 
 def dec2bitmatrix(xmin, xmax):
     """
@@ -86,12 +96,13 @@ def dec2bitmatrix(xmin, xmax):
     bitmatrix : 2D ndarray of ints
         Matrix containing the binary representation of the input decimal.
     """
-    width = np.floor(np.log2(xmax)+1)
+    width = np.floor(np.log2(xmax) + 1)
     distance = xmax - xmin
-    bitmatrix = np.zeros((int(distance)+1, int(width)))
-    for i in range(int(distance+1)):
-        bitmatrix[i,:] = dec2bitarray(xmin+i, int(width))
-    return(bitmatrix)    
+    bitmatrix = np.zeros((int(distance) + 1, int(width)))
+    for i in range(int(distance + 1)):
+        bitmatrix[i, :] = dec2bitarray(xmin + i, int(width))
+    return (bitmatrix)
+
 
 def hamming_dist(in_bitarray_1, in_bitarray_2):
     """
@@ -112,6 +123,7 @@ def hamming_dist(in_bitarray_1, in_bitarray_2):
 
     return distance
 
+
 def euclid_dist(in_array1, in_array2):
     """
     Computes the squared euclidean distance between two NumPy arrays
@@ -126,9 +138,10 @@ def euclid_dist(in_array1, in_array2):
     distance : float
         Squared Euclidean distance between two input arrays.
     """
-    distance = ((in_array1 - in_array2)*(in_array1 - in_array2)).sum()
+    distance = ((in_array1 - in_array2) * (in_array1 - in_array2)).sum()
 
     return distance
+
 
 def upsample(x, n):
     """
@@ -145,17 +158,20 @@ def upsample(x, n):
     y : 1D ndarray
         Output upsampled array.
     """
-    y = np.empty(len(x)*n, dtype=complex)
+    y = np.empty(len(x) * n, dtype=complex)
     y[0::n] = x
     zero_array = np.zeros(len(x), dtype=complex)
     for i in range(1, n):
         y[i::n] = zero_array
 
     return y
+
+
 """ The log-distance model
     Lpl = Lpld0 + 10*gamma*log10(d/d0) + X_normal
     model paramaters are initialized to NaNs to ensure they're setup befor being used
 """
+
 
 def dBmTomW(pdBm):
     """
@@ -169,11 +185,13 @@ def dBmTomW(pdBm):
     pmW : float (>0)
         Power in mW.
 	"""
-    pmW = 10.0**(pdBm/10.0)
+
+    pmW = 10.0 ** (pdBm / 10.0)
     return pmW
 
+
 def dBmTonW(pdBm):
-	"""
+    """
     dBm to nW converter
     Parameters
     ----------
@@ -184,8 +202,9 @@ def dBmTonW(pdBm):
     pmW : float (>0)
         Power in nW.
 	"""
-	pnW = 10.0**((pdBm+90.0)/10.0)
-	return pnW
+    pnW = 10.0 ** ((pdBm + 90.0) / 10.0)
+    return pnW
+
 
 def getRXPower(pTX, distance, logDistParams):
     """
@@ -204,9 +223,86 @@ def getRXPower(pTX, distance, logDistParams):
         Receiver signal power.
     """
     gamma, Lpld0, d0 = logDistParams
-    pRX = pTX - Lpld0 - 10.0*gamma*np.log10(distance/d0)
+    pRX = pTX - Lpld0 - 10.0 * gamma * np.log10(distance / d0)
+
     return pRX
-	
+
+
+def getRXPower2(pTX, freq, distance, logDistParams):
+    """
+    Get ideal RX power estimate assuming log-distance model.
+    Parameters
+    ----------
+    pTX : float
+        Power in dBm.
+    distance: float
+        Distance in m
+    logDistParams: list in format [gamma, Lpld0, d0]
+        Parameters for log shadowing channel model.
+    Returns
+    -------
+    pRX : float (>0)
+        Receiver signal power.
+    """
+    gamma, Lpld0, d0 = logDistParams
+    pRX = pTX - Lpld0 - 10.0 * gamma * np.log10(distance / d0) + np.random.normal(0, 3, 1)
+    pRX_watt = 10 ** ((pRX - 30) / 10)
+    ########### Path loss model used in matlab
+    # print('my bad')
+    # print(freq)
+    wavelength = 3e8 / freq
+    wavelength = 3e8 / 868.1E6
+    pTX_watt = 10 ** ((pTX - 30) / 10)
+    g_d1 = (1 / distance ** gamma) * (wavelength / (4 * math.pi)) ** 2
+    # print("g_d1" +str(g_d1))
+    pRX2 = pTX_watt * g_d1
+    # print(wavelength)
+    # print("PRX2 " + str(pRX2))
+    # print(10*math.log10(pRX2))
+    return pRX2
+
+
+def getSNR(pRX, mu, Omega, size, rg):
+    Noise_dBm = -174 + 6 + 10 * math.log10(125e3)
+    Noise = 10 ** ((Noise_dBm - 30) / 10)  # Adding noise
+    # pRX_watt = 10 ** ((pRX - 30) / 10)
+    channel_gain = nakagami(pRX, mu, Omega, size, rg)  # Adding the effect of nakagami fading on the signal
+    # print("channel gain" +str(channel_gain))
+    SNR = 10 * math.log10(channel_gain / Noise)
+    #SNR = pRX - Noise_dBm
+    return SNR
+
+
+def Q_func(f):
+    Qvalue = 0.5 - 0.5 * special.erf(f / math.sqrt(2))
+    return Qvalue
+
+
+def PRR_calculator(SNR, SF, CR, BW, packet_length):
+    BW = BW * 10e2
+    # print(BW)
+    # print(10e2)
+    # print(125e3)
+    Rs = (4 * SF / CR) * BW / 2 ** SF
+    # print("Rs" + str(Rs))
+
+    BW = 125e3
+    temp = SNR - 10 * math.log10(Rs / BW)
+
+    f = math.log(SF, 12) * temp / math.sqrt(2)
+    # print("f" + str(f))
+
+    BER = Q_func(f)
+
+    # print("BER" + str(BER))
+    if (CR == 5):
+        PRR = (1 - BER) ** packet_length
+    elif (CR == 7):
+        PRR = (1 - BER) ** packet_length + packet_length * BER * (1 - BER) ** (packet_length - 1)
+    # print("PRR" + str(PRR))
+    return PRR
+
+
 def getTXPower(pRX, distance, logDistParams):
     """
     Get ideal TX power estimate assuming log-distance model.
@@ -224,8 +320,9 @@ def getTXPower(pRX, distance, logDistParams):
         Transmitter signal power.
     """
     gamma, Lpld0, d0 = logDistParams
-    pTX = pRX + Lpld0 + 10.0*gamma*np.log10(distance/d0)
+    pTX = pRX + Lpld0 + 10.0 * gamma * np.log10(distance / d0)
     return pTX
+
 
 def getDistanceFromPL(pLoss, logDistParams):
     """
@@ -242,11 +339,12 @@ def getDistanceFromPL(pLoss, logDistParams):
         Distance in m.
     """
     gamma, Lpld0, d0 = logDistParams
-    d = d0*(10.0**((pLoss-Lpld0)/(10.0*gamma)))
+    d = d0 * (10.0 ** ((pLoss - Lpld0) / (10.0 * gamma)))
     return d
 
+
 def getDistanceFromPower(pTX, pRX, logDistParams):
-	"""
+    """
     Get distance from the transmission and reception powers.
     Parameters
     ----------
@@ -261,7 +359,8 @@ def getDistanceFromPower(pTX, pRX, logDistParams):
     d : float (>0)
         Distance in m.
 	"""
-	return getDistanceFromPL(pTX - pRX, logDistParams)
+    return getDistanceFromPL(pTX - pRX, logDistParams)
+
 
 def getFreqBucketsFromSet(nbChannels):
     """
@@ -282,6 +381,7 @@ def getFreqBucketsFromSet(nbChannels):
     freqBuckets.extend(np.linspace(minfreq, maxfreq, nbChannels, dtype=int))
     return freqBuckets
 
+
 def placeRandomly(number, locArray, xRange, yRange):
     """ Place location of a node (or bs) randomly
     Parameters
@@ -300,8 +400,8 @@ def placeRandomly(number, locArray, xRange, yRange):
     for n in range(number):
         x = random.uniform(xRange[0], xRange[1])
         y = random.uniform(yRange[0], yRange[1])
-        locArray[n,:] = [n, x, y]
-        
+        locArray[n, :] = [n, x, y]
+
 
 def placeRandomlyInRange(number, nrIntNodes, locArray, xRange, yRange, refLoc, bestValue,
                          radius, transmitParams, maxPtx, distribution, distMatrix):
@@ -336,29 +436,47 @@ def placeRandomlyInRange(number, nrIntNodes, locArray, xRange, yRange, refLoc, b
         Location array.
     """
     temp = 0
+    total = 0
     for idx in range(len(distribution)):
         number_nodes = int(number * distribution[idx])
+        total = total + number_nodes
+        if idx == 5 and total < number:
+            number_nodes = number_nodes + number - total
+            # print(total - number)
         for n in range(number_nodes):
+            temp2 = 0
             while True:
                 # This could technically turn into an infinite loop but that shouldn't ever practically happen.
                 # add check here later
                 x = random.uniform(xRange[0], xRange[1])
                 y = random.uniform(yRange[0], yRange[1])
-                #print(x, y)
+                temp2 += 1
+                # print(x, y)
                 rdd, packetLength, preambleLength, syncLength, headerEnable, crc = transmitParams
                 bestDist, bestSF, bestBW = bestValue
                 if idx == 0:
-                    if np.any(np.sum(np.square(refLoc[:,1:3] - np.array([x,y]).reshape(1,2)), axis=1) <= radius**2):
-                        if np.any(np.sum(np.square(refLoc[:,1:3] - np.array([x,y]).reshape(1,2)), axis=1) <= distMatrix[idx]**2):
-                            locArray[n+temp,:] = [n+temp, x, y, bestSF, rdd, bestBW, packetLength, preambleLength, syncLength, headerEnable, crc, maxPtx, 0, 0]
+                    if np.any(
+                            np.sum(np.square(refLoc[:, 1:3] - np.array([x, y]).reshape(1, 2)), axis=1) <= radius ** 2):
+                        if np.any(np.sum(np.square(refLoc[:, 1:3] - np.array([x, y]).reshape(1, 2)), axis=1) <=
+                                  distMatrix[idx] ** 2):
+                            locArray[n + temp, :] = [n + temp, x, y, bestSF, rdd, bestBW, packetLength, preambleLength,
+                                                     syncLength, headerEnable, crc, maxPtx, 0, 0]
                             break
+
                 else:
-                    if np.any(np.sum(np.square(refLoc[:,1:3] - np.array([x,y]).reshape(1,2)), axis=1) <= radius**2):
-                        if np.any(np.sum(np.square(refLoc[:,1:3] - np.array([x,y]).reshape(1,2)), axis=1) <= distMatrix[idx]**2):
-                            if np.any(np.sum(np.square(refLoc[:,1:3] - np.array([x,y]).reshape(1,2)), axis=1) >= distMatrix[idx-1]**2):
-                                locArray[n+temp,:] = [n+temp, x, y, bestSF, rdd, bestBW, packetLength, preambleLength, syncLength, headerEnable, crc, maxPtx, 0, 0]
+                    if np.any(
+                            np.sum(np.square(refLoc[:, 1:3] - np.array([x, y]).reshape(1, 2)), axis=1) <= radius ** 2):
+                        if np.any(np.sum(np.square(refLoc[:, 1:3] - np.array([x, y]).reshape(1, 2)), axis=1) <=
+                                  distMatrix[idx] ** 2):
+                            if np.any(np.sum(np.square(refLoc[:, 1:3] - np.array([x, y]).reshape(1, 2)), axis=1) >=
+                                      distMatrix[idx - 1] ** 2):
+                                locArray[n + temp, :] = [n + temp, x, y, bestSF, rdd, bestBW, packetLength,
+                                                         preambleLength, syncLength, headerEnable, crc, maxPtx, 0, 0]
+
                                 break
+
         temp += number_nodes
+
 
 def airtime(phyParams):
     """ Computes the airtime of a packet in second.
@@ -385,20 +503,23 @@ def airtime(phyParams):
     Tpream + Tpayload: float
         The time on air of a packer in second.
     """
-    DE = 1       # low data rate optimization enabled (=1) or not (=0)
+    DE = 1  # low data rate optimization enabled (=1) or not (=0)
     sf, rdd, bw, packetLength, preabmleLength, syncLength, headerEnable, crc = phyParams
-#    if bw == 125 and sf in [11, 12]:
-#        # low data rate optimization mandated for BW125 with SF11 and SF12
-#        DE = 1
-#    if sf == 6:
-#        # can only have implicit header with SF6
-#        headerEnable = True
-
-    Tsym = (2.0**sf)/bw
-    Tpream = (preabmleLength + syncLength)*Tsym
-    payloadSymbNB = 8 + max(math.ceil((8.0*packetLength-4.0*sf+28+16*crc-20*headerEnable)/(4.0*(sf-2*DE)))*(rdd+4),0)
+    #    if bw == 125 and sf in [11, 12]:
+    #        # low data rate optimization mandated for BW125 with SF11 and SF12
+    #        DE = 1
+    #    if sf == 6:
+    #        # can only have implicit header with SF6
+    #        headerEnable = True
+    # bw = 125e3
+    Tsym = (2.0 ** sf) / bw
+    Tpream = (preabmleLength + syncLength) * Tsym
+    payloadSymbNB = 8 + max(
+        math.ceil((8.0 * packetLength - 4.0 * sf + 28 + 16 * crc - 20 * headerEnable) / (4.0 * (sf - 2 * DE))) * (
+                rdd + 4), 0)
     Tpayload = payloadSymbNB * Tsym
     return Tpream + Tpayload
+
 
 def getMaxTransmitDistance(RXSensi, maxPtx, logDistParams, phyParams):
     """ Get the best range for for allowed power from the the transmit time and bandwidth used.
@@ -424,35 +545,37 @@ def getMaxTransmitDistance(RXSensi, maxPtx, logDistParams, phyParams):
         Maximum bandwidth to get the max distance.
 
     """
-    
+
     gamma, Lpld0, d0 = logDistParams
     rdd, packetLength, headerEnable, preambleLength, syncLength, crc = phyParams
-   
-    PTx125 = min(maxPtx,14) # in dBm
-    PTx250 = min(maxPtx,14) # in dBm
-   
-    Lpl125 = PTx125 - RXSensi[:,1]
-    Lpl250 = PTx250 - RXSensi[:,2]
-    
-    
-    LplMatrix = np.concatenate((Lpl125.reshape((6,1)), Lpl250.reshape((6,1))), axis=1)
-    distMatrix =np.dot(d0, np.power(10, np.divide(LplMatrix - Lpld0, 10*gamma)))
-    
-    packetAirtimeValid = np.zeros((6,2))
+
+    PTx125 = min(maxPtx, 14)  # in dBm
+    PTx250 = min(maxPtx, 14)  # in dBm
+
+    Lpl125 = PTx125 - RXSensi[:, 1]
+    Lpl250 = PTx250 - RXSensi[:, 2]
+
+    LplMatrix = np.concatenate((Lpl125.reshape((6, 1)), Lpl250.reshape((6, 1))), axis=1)
+    distMatrix = np.dot(d0, np.power(10, np.divide(LplMatrix - Lpld0, 10 * gamma)))
+    print(distMatrix)
+
+    packetAirtimeValid = np.zeros((6, 2))
     for i in range(6):
         # set packet airtime valid <= 400
-        packetAirtimeValid[i,0] = (airtime((i+7, rdd, 125, packetLength, preambleLength, syncLength, headerEnable, crc)) <= 9999)
-        packetAirtimeValid[i,1] = (airtime((i+7, rdd, 250, packetLength, preambleLength, syncLength, headerEnable, crc)) <= 9999)
+        packetAirtimeValid[i, 0] = (
+                airtime((i + 7, rdd, 125, packetLength, preambleLength, syncLength, headerEnable, crc)) <= 9999)
+        packetAirtimeValid[i, 1] = (
+                airtime((i + 7, rdd, 250, packetLength, preambleLength, syncLength, headerEnable, crc)) <= 9999)
     Index = np.argmax(np.multiply(distMatrix, packetAirtimeValid))
-    
-    sfInd, bwInd = np.unravel_index(Index, (6,2))
+
+    sfInd, bwInd = np.unravel_index(Index, (6, 2))
     if packetAirtimeValid[sfInd, bwInd] == 0:
         raise ValueError("Packet length too large!")
-    
+
     maxSF = sfInd + 7
     if bwInd == 0:
         maxBW = 125
     else:
         maxBW = 250
-    
-    return distMatrix[:, bwInd], distMatrix[sfInd,bwInd], maxSF, maxBW
+
+    return distMatrix[:, bwInd], distMatrix[sfInd, bwInd], maxSF, maxBW
